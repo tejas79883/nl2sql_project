@@ -318,8 +318,4 @@ Show patient registration trend by month
 | `ModuleNotFoundError: vanna` | Run `pip install -r requirements.txt` |
 | Port 8000 already in use | Use `uvicorn main:app --port 8001` |
 
----
 
-## Contact
-
-For questions about this assignment: hiring@company.com
