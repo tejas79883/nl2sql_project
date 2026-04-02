@@ -81,7 +81,9 @@ def create_agent() -> Agent:
         max_tool_iterations=10,
         stream_responses=True,
         auto_save_conversations=True,
-        temperature=0.2,          # lower = more deterministic SQL
+        temperature=0.2,         # lower = more deterministic SQL
+
+       
     )
 
     # Assemble agent

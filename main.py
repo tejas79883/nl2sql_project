@@ -132,30 +132,42 @@ async def chat(request: ChatRequest):
     chart_component: Optional[ChartComponent]  = None
 
     try:
-        async for component in agent.send_message(
-            request_context=request_context,
-            message=question,
-            conversation_id=conversation_id,
-        ):
-            ctype = getattr(component, "type", None)
+        stream = agent.send_message(
+        request_context=request_context,
+        message=question,
+        conversation_id=conversation_id,
+    )
 
-            # Text / rich-text responses
-            if hasattr(component, "text"):
-                text_parts.append(component.text)
-            elif hasattr(component, "content"):
-                text_parts.append(str(component.content))
+        received_any = False
 
-            # DataFrame component (contains columns + rows)
-            if isinstance(component, DataFrameComponent):
-                df_component = component
+        async for comp in stream:
+            received_any = True
 
-            # Chart component
-            if isinstance(component, ChartComponent):
-                chart_component = component
+            print("DEBUG COMPONENT:", type(comp))
+
+            if hasattr(comp, "text"):
+                text_parts.append(comp.text)
+            elif hasattr(comp, "content"):
+                text_parts.append(str(comp.content))
+
+            if isinstance(comp, DataFrameComponent):
+                df_component = comp
+
+            if isinstance(comp, ChartComponent):
+                chart_component = comp
+
+        
+        if not received_any:
+            return ChatResponse(
+                message="Agent failed to produce any response.",
+                error="EMPTY_AGENT_RESPONSE"
+            )
 
     except Exception as agent_err:
+        print("AGENT ERROR:", str(agent_err))
+
         return ChatResponse(
-            message="The AI agent encountered an error while processing your question.",
+            message="The AI agent crashed before generating a response.",
             error=str(agent_err),
         )
 
@@ -181,13 +193,17 @@ async def chat(request: ChatRequest):
     columns: list[str] = []
     rows:    list[list[Any]] = []
 
-    # Prefer agent-provided DataFrame
+# ✅ PRIORITY 1: Use DataFrame from agent (CORRECT way for Vanna)
     if df_component is not None:
-        columns = df_component.columns
-        rows    = [[row.get(c) for c in columns] for row in df_component.rows]
+        print("DEBUG: Using DataFrameComponent")
 
-    # Fall back to direct execution when agent didn't return a DataFrame
+        columns = df_component.columns
+        rows = [[row.get(c) for c in columns] for row in df_component.rows]
+
+    # ✅ PRIORITY 2: Fallback to SQL execution (only if SQL exists)
     elif validated_sql:
+        print("DEBUG: Using fallback SQL execution")
+
         try:
             columns, rows = _run_sql_direct(validated_sql)
         except sqlite3.Error as db_err:
@@ -196,6 +212,15 @@ async def chat(request: ChatRequest):
                 sql_query=validated_sql,
                 error=str(db_err),
             )
+
+    # ❌ PRIORITY 3: If both fail → return proper error (IMPORTANT)
+    else:
+        print("DEBUG: No DataFrame and No SQL generated")
+
+        return ChatResponse(
+            message="AI failed to generate a valid SQL query. Please rephrase your question.",
+            error="NO_SQL_GENERATED"
+        )
 
     row_count = len(rows)
 
@@ -206,7 +231,7 @@ async def chat(request: ChatRequest):
         else:
             full_text = f"Here are the results for: {question}"
 
-    # ── Chart ────────────────────────────────────────────────────────────────
+    # ── Chart ──────────────────────────────────────────────────────────────── 
     chart_payload  = None
     chart_type_str = None
     if chart_component is not None:
